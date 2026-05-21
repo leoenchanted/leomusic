@@ -1,0 +1,19 @@
+{
+  "name": "LEO DJ",
+  "short_name": "LEO DJ",
+  "description": "A private AI DJ workbench for Bilibili playlists, spoken radio transitions, and Spotify playback.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#11110f",
+  "theme_color": "#11110f",
+  "orientation": "landscape",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

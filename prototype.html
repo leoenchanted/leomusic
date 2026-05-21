@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Nothing OS - AI Radio & Console</title>
+    <link href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+
+    <style>
+        :root {
+            /* 默认暗黑主题变量 */
+            --bg-color: #030303;
+            --fg-color: #ffffff;
+            --glass-bg: rgba(14, 14, 14, 0.48);
+            --glass-border: rgba(255, 255, 255, 0.12);
+            --glass-shadow: rgba(0, 0, 0, 0.5);
+            --accent-red: #FF2A2A;
+            --dot-color: rgba(255, 255, 255, 0.12);
+            --text-dim: #888888;
+            --font-dot: 'DotGothic16', sans-serif;
+            --font-mono: 'Space Mono', monospace;
+        }
+
+        body.light-mode {
+            /* 白天主题变量 */
+            --bg-color: #f4f4f4;
+            --fg-color: #000000;
+            --glass-bg: rgba(255, 255, 255, 0.52);
+            --glass-border: rgba(0, 0, 0, 0.08);
+            --glass-shadow: rgba(0, 0, 0, 0.06);
+            --accent-red: #E51A1A;
+            --dot-color: rgba(0, 0, 0, 0.08);
+            --text-dim: #666666;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+
+        body {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background-color: var(--bg-color);
+            color: var(--fg-color);
+            font-family: var(--font-mono);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: background-color 0.8s ease;
+        }
+
+        /* WebGL 背景（纯净点阵） */
+        #webgl-container {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        /* ========================================================
+         * 核心整体布局容器（控制台主框架）
+         * ======================================================== */
+        .console-container {
+            display: flex;
+            align-items: center;
+            gap: 24px; /* 卡片与旁边按钮组的黄金工业间距 */
+            position: relative;
+            z-index: 10;
+        }
+
+        /* 主卡片包装容器 */
+        .card-wrapper {
+            position: relative;
+            width: 420px;
+            height: 680px;
+        }
+
+        /* 卡片专属动态呼吸背光层 */
+        .card-backlight {
+            position: absolute;
+            top: 10px; left: 10px; right: 10px; bottom: 10px;
+            border-radius: 40px;
+            z-index: 1;
+            pointer-events: none;
+            filter: blur(65px);
+            transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* 默认状态（暂停）：不发彩色光，微弱呼吸起伏 */
+        .card-backlight.paused {
+            background: rgba(255, 255, 255, 0.25);
+            animation: breathePaused 4.0s ease-in-out infinite;
+        }
+        body.light-mode .card-backlight.paused {
+            background: rgba(0, 0, 0, 0.12);
+        }
+
+        /* 播放状态：全彩渐变无缝流动 + 高光扩张呼吸 */
+        .card-backlight.playing {
+            background: linear-gradient(125deg, #FF2A2A, #FF7A00, #00F0FF, #7F00FF, #FF007F, #FF2A2A);
+            background-size: 400% 400%;
+            animation: gradientFlow 8s linear infinite, breathePlaying 2.4s ease-in-out infinite;
+        }
+
+        @keyframes breathePaused {
+            0%, 100% { opacity: 0.3; transform: scale(0.97); }
+            50% { opacity: 0.6; transform: scale(1.01); }
+        }
+        @keyframes breathePlaying {
+            0%, 100% { opacity: 0.55; transform: scale(0.95); filter: blur(55px); }
+            50% { opacity: 0.95; transform: scale(1.06); filter: blur(80px); }
+        }
+        @keyframes gradientFlow {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        /* 前景播放器卡片 */
+        .nothing-card {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 2;
+            background: var(--glass-bg);
+            backdrop-filter: blur(30px);
+            -webkit-backdrop-filter: blur(30px);
+            border: 1px solid var(--glass-border);
+            border-radius: 32px;
+            box-shadow: 0 30px 70px var(--glass-shadow), 
+                        inset 0 1px 1px rgba(255,255,255,0.15);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* 工业风装饰螺丝 */
+        .screw {
+            position: absolute;
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            border: 1px solid var(--glass-border);
+            background: linear-gradient(135deg, transparent 40%, var(--fg-color) 45%, transparent 50%);
+            opacity: 0.3;
+        }
+        .screw.tl { top: 18px; left: 18px; }
+        .screw.tr { top: 18px; right: 18px; transform: rotate(45deg); }
+        .screw.bl { bottom: 18px; left: 18px; transform: rotate(90deg); }
+        .screw.br { bottom: 18px; right: 18px; transform: rotate(-45deg); }
+
+        /* 头部区域 */
+        .card-header {
+            padding: 35px 30px 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+        .time-display {
+            font-family: var(--font-dot);
+            font-size: 3.5rem;
+            line-height: 1;
+            letter-spacing: -2px;
+        }
+        .time-sec {
+            font-size: 1.5rem;
+            color: var(--accent-red);
+            margin-left: 4px;
+        }
+
+        /* 拨动开关 */
+        .toggle-switch {
+            width: 54px; height: 28px;
+            border-radius: 14px;
+            background: var(--dot-color);
+            border: 1px solid var(--glass-border);
+            position: relative;
+            cursor: pointer;
+        }
+        .toggle-knob {
+            width: 22px; height: 22px;
+            background: var(--fg-color);
+            border-radius: 50%;
+            position: absolute;
+            top: 2px; left: 3px;
+            transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        body.light-mode .toggle-knob { transform: translateX(24px); }
+
+        /* 选项卡视图切换 */
+        .view-tabs {
+            display: flex;
+            margin: 0 30px 25px 30px;
+            background: var(--dot-color);
+            border-radius: 14px;
+            padding: 5px;
+            position: relative;
+        }
+        .tab {
+            flex: 1; text-align: center;
+            padding: 10px 0;
+            font-size: 0.85rem; font-weight: 700;
+            text-transform: uppercase;
+            cursor: pointer;
+            z-index: 2;
+            color: var(--text-dim);
+            transition: color 0.3s;
+        }
+        .tab.active { color: var(--bg-color); }
+        .tab-indicator {
+            position: absolute;
+            top: 5px; left: 5px;
+            width: calc(50% - 5px); height: calc(100% - 10px);
+            background: var(--fg-color);
+            border-radius: 10px;
+            z-index: 1;
+        }
+
+        .content-container {
+            flex: 1;
+            position: relative;
+            width: 100%;
+        }
+
+        /* AI Chat 视图 */
+        .home-view {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            padding: 0 30px 35px 30px;
+            display: flex;
+            flex-direction: column;
+            visibility: visible;
+            opacity: 1;
+        }
+        .chat-history {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            padding-right: 5px;
+            margin-bottom: 25px;
+            scrollbar-width: none;
+        }
+        .chat-history::-webkit-scrollbar { display: none; }
+        .msg { max-width: 88%; font-size: 0.95rem; line-height: 1.5; }
+        .msg.ai { align-self: flex-start; font-family: var(--font-dot); color: var(--text-dim); }
+        .msg.user {
+            align-self: flex-end;
+            background: var(--fg-color);
+            color: var(--bg-color);
+            padding: 12px 16px;
+            border-radius: 18px 18px 0 18px;
+        }
+        .chat-input-box {
+            display: flex;
+            align-items: center;
+            background: var(--dot-color);
+            border-radius: 24px;
+            padding: 6px 6px 6px 20px;
+            border: 1px solid var(--glass-border);
+        }
+        .chat-input {
+            flex: 1; background: transparent;
+            border: none; outline: none;
+            color: var(--fg-color);
+            font-family: var(--font-mono);
+            font-size: 0.95rem;
+        }
+        .chat-input::placeholder { color: var(--text-dim); }
+        .send-btn {
+            width: 36px; height: 36px;
+            border-radius: 50%;
+            background: var(--accent-red);
+            border: none;
+            display: flex; justify-content: center; align-items: center;
+            cursor: pointer;
+        }
+        .send-btn svg { width: 16px; height: 16px; fill: #fff; }
+
+        /* Radio 播放器视图 */
+        .player-view {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            padding: 0 30px 35px 30px;
+            display: flex;
+            flex-direction: column;
+            visibility: hidden;
+            opacity: 0;
+        }
+        .radio-info { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+        .radio-badge {
+            align-self: flex-start;
+            border: 1px solid var(--accent-red);
+            color: var(--accent-red);
+            padding: 4px 10px; border-radius: 6px;
+            font-size: 0.75rem; text-transform: uppercase;
+            letter-spacing: 1px; margin-bottom: 20px;
+            font-family: var(--font-dot);
+        }
+        .song-title { font-size: 1.9rem; font-weight: 700; margin-bottom: 10px; line-height: 1.2; }
+        .song-artist { font-size: 1rem; color: var(--text-dim); margin-bottom: 35px; }
+        .subtitle-box { min-height: 85px; border-left: 3px solid var(--accent-red); padding-left: 18px; margin-bottom: 30px; }
+        .subtitle-text { font-family: var(--font-dot); font-size: 1.15rem; line-height: 1.5; }
+        .subtitle-cursor {
+            display: inline-block; width: 8px; height: 1.15rem;
+            background: var(--accent-red); vertical-align: bottom;
+            animation: blink 1s infinite;
+        }
+
+        /* 控制区域 */
+        .controls { display: flex; align-items: center; justify-content: space-between; }
+        .play-btn {
+            width: 68px; height: 68px;
+            border-radius: 50%; background: transparent;
+            border: 2px solid var(--fg-color);
+            display: flex; justify-content: center; align-items: center;
+            cursor: pointer; position: relative; overflow: hidden;
+        }
+        .play-btn::before {
+            content: ''; position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--fg-color);
+            transform: scale(0);
+            transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            border-radius: 50%; z-index: 0;
+        }
+        .play-btn.playing::before { transform: scale(1); }
+        .play-btn.playing .icon-play { display: none; }
+        .play-btn.playing .icon-pause { display: block; fill: var(--bg-color); }
+        .play-btn svg { width: 26px; height: 26px; fill: var(--fg-color); z-index: 1; }
+        .icon-pause { display: none; }
+
+        /* 点阵进度条 */
+        .progress-container { flex: 1; margin-left: 25px; display: flex; align-items: center; gap: 5px; }
+        .progress-dot { height: 5px; flex: 1; background: var(--dot-color); border-radius: 2.5px; }
+        .progress-dot.active { background: var(--fg-color); }
+        .progress-dot.accent { background: var(--accent-red); }
+
+        /* ========================================================
+         * 新增：右侧挂载式控制圆形按钮组（Control Rack）
+         * ======================================================== */
+        .control-rack {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .rack-btn {
+            width: 56px; height: 56px;
+            border-radius: 50%;
+            background: var(--glass-bg);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border: 1px solid var(--glass-border);
+            display: flex; justify-content: center; align-items: center;
+            cursor: pointer; position: relative;
+            box-shadow: 0 10px 25px var(--glass-shadow);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .rack-btn svg {
+            width: 22px; height: 22px;
+            fill: var(--fg-color);
+            opacity: 0.8;
+            transition: opacity 0.3s, transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        /* 悬浮动效：微发光与图标微妙形变，无位置位移 */
+        .rack-btn:hover {
+            border-color: var(--fg-color);
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.15);
+        }
+        body.light-mode .rack-btn:hover {
+            box-shadow: 0 6px 15px rgba(0,0,0,0.1);
+        }
+        .rack-btn:hover svg { opacity: 1; transform: scale(1.1); }
+        .rack-btn:active { transform: scale(0.94); }
+
+        /* 旋转动效专供给设置齿轮 */
+        .rack-btn:hover .icon-gear { transform: scale(1.1) rotate(45deg); }
+
+        /* 硬件悬浮文字提示 */
+        .rack-btn::after {
+            content: attr(data-tooltip);
+            position: absolute; left: 72px;
+            background: var(--fg-color); color: var(--bg-color);
+            padding: 4px 10px; border-radius: 6px;
+            font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+            white-space: nowrap; opacity: 0; pointer-events: none;
+            transform: translateX(-10px);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .rack-btn:hover::after { opacity: 1; transform: translateX(0); }
+
+        /* ========================================================
+         * 新增：契合主题的“高级设置弹窗中心”
+         * ======================================================== */
+        .settings-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(0, 0, 0, 0.35);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            z-index: 100;
+            display: flex; justify-content: center; align-items: center;
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.4s ease;
+        }
+        .settings-overlay.active { opacity: 1; pointer-events: auto; }
+
+        .settings-window {
+            width: 460px;
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 28px;
+            padding: 30px;
+            box-shadow: 0 40px 90px rgba(0,0,0,0.6);
+            display: flex; flex-direction: column; gap: 24px;
+            position: relative;
+        }
+
+        /* 设置头部 */
+        .settings-header {
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px dashed var(--glass-border);
+            padding-bottom: 15px;
+        }
+        .settings-title { font-family: var(--font-dot); font-size: 1.4rem; letter-spacing: 1px; }
+        .settings-close-btn {
+            width: 32px; height: 32px; border-radius: 50%;
+            border: 1px solid var(--glass-border); background: transparent;
+            color: var(--fg-color); cursor: pointer;
+            display: flex; justify-content: center; align-items: center;
+            transition: all 0.2s;
+        }
+        .settings-close-btn:hover { background: var(--fg-color); color: var(--bg-color); }
+
+        /* 配置表单区 */
+        .settings-body { display: flex; flex-direction: column; gap: 20px; }
+        
+        .form-group { display: flex; flex-direction: column; gap: 8px; }
+        .form-label { font-size: 0.75rem; text-transform: uppercase; color: var(--text-dim); font-weight: 700; letter-spacing: 0.5px; }
+        
+        /* Nothing 风格表单控件 */
+        .form-select, .form-input {
+            width: 100%; padding: 12px 16px;
+            background: var(--dot-color);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            color: var(--fg-color);
+            font-family: var(--font-mono); font-size: 0.9rem;
+            outline: none; transition: border-color 0.3s;
+        }
+        .form-select:focus, .form-input:focus { border-color: var(--fg-color); }
+        .form-select option { background: var(--bg-color); color: var(--fg-color); }
+
+        /* 硬件层级范围滑块 */
+        .range-slider-box { display: flex; align-items: center; gap: 15px; }
+        .form-range {
+            flex: 1; -webkit-appearance: none; appearance: none;
+            height: 4px; background: var(--dot-color); border-radius: 2px; outline: none;
+        }
+        .form-range::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 14px; height: 14px;
+            border-radius: 50%; background: var(--accent-red); cursor: pointer;
+        }
+        .range-val { font-size: 0.85rem; min-width: 35px; text-align: right; }
+
+        /* 底部系统状态矩阵 */
+        .system-matrix {
+            background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border);
+            border-radius: 12px; padding: 12px;
+            font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-dim);
+            display: flex; flex-direction: column; gap: 4px;
+        }
+        .matrix-row { display: flex; justify-content: space-between; }
+        .matrix-status { color: #00FF66; } /* 经典安全绿 */
+
+        /* 保存按钮 */
+        .settings-save-btn {
+            width: 100%; padding: 14px; border-radius: 14px;
+            border: none; background: var(--fg-color); color: var(--bg-color);
+            font-family: var(--font-mono); font-weight: 700; font-size: 0.9rem;
+            text-transform: uppercase; cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
+        }
+        .settings-save-btn:hover { opacity: 0.9; }
+        .settings-save-btn:active { transform: scale(0.98); }
+
+    </style>
+</head>
+<body>
+
+    <div id="webgl-container"></div>
+
+    <div class="console-container">
+        
+        <div class="card-wrapper">
+            <div class="card-backlight paused" id="card-glow"></div>
+            <div class="nothing-card" id="card">
+                <div class="screw tl"></div><div class="screw tr"></div><div class="screw bl"></div><div class="screw br"></div>
+
+                <div class="card-header">
+                    <div class="time-display">
+                        <span id="time-hm">10:08</span><span class="time-sec" id="time-s">42</span>
+                    </div>
+                    <div class="toggle-switch" id="theme-switch">
+                        <div class="toggle-knob"></div>
+                    </div>
+                </div>
+
+                <div class="view-tabs">
+                    <div class="tab-indicator" id="tab-indicator"></div>
+                    <div class="tab active" id="tab-home">AI Chat</div>
+                    <div class="tab" id="tab-radio">Radio</div>
+                </div>
+
+                <div class="content-container">
+                    <div class="home-view" id="view-home">
+                        <div class="chat-history" id="chat-history">
+                            <div class="msg ai">> SYSTEM_ONLINE. Awaiting your frequency.</div>
+                            <div class="msg user">帮我找点赛博朋克风格的灵感，适合深夜敲代码的。</div>
+                            <div class="msg ai">> Scanning wavelengths... Found Channel 0x88. Generating audio stream with heavy synth and glitch hops. Switch to Radio view to listen.</div>
+                        </div>
+                        <div class="chat-input-box">
+                            <input type="text" class="chat-input" id="chat-input" placeholder="Transmit thought..." autocomplete="off">
+                            <button class="send-btn" id="send-btn">
+                                <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="player-view" id="view-radio">
+                        <div class="radio-info">
+                            <div class="radio-badge">Live · FM 102.4</div>
+                            <div class="song-title">Night City Drive (Terminal Mix)</div>
+                            <div class="song-artist">AI Composer _ 0x88</div>
+                            <div class="subtitle-box">
+                                <span class="subtitle-text" id="subtitle-text"></span><span class="subtitle-cursor"></span>
+                            </div>
+                        </div>
+                        <div class="controls">
+                            <div class="play-btn" id="play-btn">
+                                <svg class="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                                <svg class="icon-pause" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                            </div>
+                            <div class="progress-container" id="progress-bar"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="control-rack">
+            <div class="rack-btn" id="btn-settings" data-tooltip="Settings">
+                <svg class="icon-gear" viewBox="0 0 24 24">
+                    <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+                </svg>
+            </div>
+            <div class="rack-btn" id="btn-equalizer" data-tooltip="Tuning / EQ">
+                <svg viewBox="0 0 24 24">
+                    <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+                </svg>
+            </div>
+            <div class="rack-btn" id="btn-diagnostics" data-tooltip="Inject Logs">
+                <svg viewBox="0 0 24 24">
+                    <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 12H4v-2h8v2zm4-4H4v-2h12v2zm4-4H4V6h16v2z"/>
+                </svg>
+            </div>
+        </div>
+    </div>
+
+    <div class="settings-overlay" id="settings-overlay">
+        <div class="settings-window" id="settings-window">
+            <div class="settings-header">
+                <div class="settings-title">> CONSOLE_SETTINGS</div>
+                <button class="settings-close-btn" id="settings-close">✕</button>
+            </div>
+            
+            <div class="settings-body">
+                <div class="form-group">
+                    <label class="form-label">AI Intelligence Model</label>
+                    <select class="form-select">
+                        <option>DeepSeek-R1 (Reasoning)</option>
+                        <option>GPT-4o Streamline</option>
+                        <option>Claude 3.5 Sonnet v2</option>
+                        <option>Custom Local LLM (0x88)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Secure API Secret Key</label>
+                    <input type="password" class="form-input" value="••••••••••••••••••••••••••••" placeholder="sk-....................">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">API Core Base URL</label>
+                    <input type="text" class="form-input" value="https://api.deepseek.com/v1" placeholder="https://api.yourprovider.com">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Radio Stream Buffer (ms)</label>
+                    <div class="range-slider-box">
+                        <input type="range" class="form-range" id="slider-buffer" min="100" max="2000" step="50" value="450">
+                        <span class="range-val" id="val-buffer">450ms</span>
+                    </div>
+                </div>
+
+                <div class="system-matrix">
+                    <div class="matrix-row"><span>PING_RELAY:</span><span class="matrix-status">24ms (OPTIMAL)</span></div>
+                    <div class="matrix-row"><span>CORE_KERNEL:</span><span>NOTHING_RADIO_V1.1.3</span></div>
+                    <div class="matrix-row"><span>AUDIO_DECODER:</span><span>OPUS_NATIVE_HIRES</span></div>
+                </div>
+            </div>
+
+            <button class="settings-save-btn" id="settings-save">Save & Sync Matrix</button>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * ==========================================
+         * 1. 核心状态架构
+         * ==========================================
+         */
+        const state = {
+            isLight: false,
+            view: 'home',
+            isPlaying: false,
+            playProgress: 0,
+            subtitles: [
+                "This is the frequency of the future.",
+                "Analyzing cognitive load...",
+                "Injecting dopamine via auditory channels.",
+                "Stay frosty. The night is still young.",
+                "Compiling reality... 99% complete."
+            ],
+            subIndex: 0, charIndex: 0, typingTimer: null
+        };
+
+        const elTimeHm = document.getElementById('time-hm');
+        const elTimeS = document.getElementById('time-s');
+        const elThemeSwitch = document.getElementById('theme-switch');
+        const elTabHome = document.getElementById('tab-home');
+        const elTabRadio = document.getElementById('tab-radio');
+        const elTabIndicator = document.getElementById('tab-indicator');
+        const elViewHome = document.getElementById('view-home');
+        const elViewRadio = document.getElementById('view-radio');
+        const elPlayBtn = document.getElementById('play-btn');
+        const elCardGlow = document.getElementById('card-glow');
+        const elProgressBar = document.getElementById('progress-bar');
+        const elSubtitleText = document.getElementById('subtitle-text');
+        const elChatInput = document.getElementById('chat-input');
+        const elChatHistory = document.getElementById('chat-history');
+        const elSendBtn = document.getElementById('send-btn');
+
+        // 新增控制台 DOM
+        const elSettingsBtn = document.getElementById('btn-settings');
+        const elSettingsOverlay = document.getElementById('settings-overlay');
+        const elSettingsClose = document.getElementById('settings-close');
+        const elSettingsSave = document.getElementById('settings-save');
+        const elSliderBuffer = document.getElementById('slider-buffer');
+        const elValBuffer = document.getElementById('val-buffer');
+        const elBtnDiagnostics = document.getElementById('btn-diagnostics');
+        const elBtnEqualizer = document.getElementById('btn-equalizer');
+
+        // 初始化点阵进度条
+        for(let i=0; i<20; i++) {
+            const dot = document.createElement('div');
+            dot.className = 'progress-dot';
+            elProgressBar.appendChild(dot);
+        }
+        const dots = document.querySelectorAll('.progress-dot');
+
+        /**
+         * ==========================================
+         * 2. 基础系统时钟
+         * ==========================================
+         */
+        function updateTime() {
+            const now = new Date();
+            elTimeHm.textContent = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+            elTimeS.textContent = String(now.getSeconds()).padStart(2, '0');
+        }
+        setInterval(updateTime, 1000); updateTime();
+
+        /**
+         * ==========================================
+         * 3. 弹窗与控制栏交互控制（GSAP 高级转场）
+         * ==========================================
+         */
+        
+        // 呼出配置中心
+        elSettingsBtn.addEventListener('click', () => {
+            elSettingsOverlay.classList.add('active');
+            // 加载毛玻璃升起与微放大动效
+            gsap.fromTo('#settings-window', 
+                { scale: 0.92, y: 15, opacity: 0 },
+                { scale: 1, y: 0, opacity: 1, duration: 0.4, ease: "power2.out" }
+            );
+        });
+
+        // 关闭配置中心
+        function closeSettings() {
+            gsap.to('#settings-window', {
+                scale: 0.94, y: 10, opacity: 0, duration: 0.3, ease: "power2.in",
+                onComplete: () => { elSettingsOverlay.classList.remove('active'); }
+            });
+        }
+        elSettingsClose.addEventListener('click', closeSettings);
+        elSettingsSave.addEventListener('click', closeSettings);
+
+        // 滑块实时更新数值
+        elSliderBuffer.addEventListener('input', (e) => {
+            elValBuffer.textContent = `${e.target.value}ms`;
+        });
+
+        // 外挂按钮 3：向系统注入日志调试码模拟
+        elBtnDiagnostics.addEventListener('click', () => {
+            const logMsg = document.createElement('div');
+            logMsg.className = 'msg ai';
+            logMsg.textContent = `> telemetry dump: latency=24ms stream_buffer=${elSliderBuffer.value}ms model_sync=TRUE encryption=AES_GCM_256. All matrix sectors functional.`;
+            elChatHistory.appendChild(logMsg);
+            elChatHistory.scrollTop = elChatHistory.scrollHeight;
+            
+            // 如果不在 Chat 页面则切过来
+            if(state.view !== 'home') switchView('home');
+        });
+
+        // 外挂按钮 2：均衡器提示
+        elBtnEqualizer.addEventListener('click', () => {
+            const eqMsg = document.createElement('div');
+            eqMsg.className = 'msg ai';
+            eqMsg.textContent = `> Equalizer profile adjusted: Enhanced Sub-Bass & Crisp Treble parameters injected dynamically into current frequency.`;
+            elChatHistory.appendChild(eqMsg);
+            elChatHistory.scrollTop = elChatHistory.scrollHeight;
+            if(state.view !== 'home') switchView('home');
+        });
+
+        /**
+         * ==========================================
+         * 4. 原卡片逻辑继承
+         * ==========================================
+         */
+        elThemeSwitch.addEventListener('click', () => {
+            state.isLight = !state.isLight;
+            document.body.classList.toggle('light-mode', state.isLight);
+            gsap.to(shaderUniforms.u_themeMode, { value: state.isLight ? 1.0 : 0.0, duration: 0.8 });
+        });
+
+        function switchView(targetView) {
+            if (state.view === targetView) return;
+            state.view = targetView;
+            const isRadio = targetView === 'radio';
+            
+            gsap.to(elTabIndicator, { x: isRadio ? '100%' : '0%', duration: 0.4, ease: "power2.out" });
+            elTabHome.classList.toggle('active', !isRadio);
+            elTabRadio.classList.toggle('active', isRadio);
+
+            const hideEl = isRadio ? elViewHome : elViewRadio;
+            const showEl = isRadio ? elViewRadio : elViewHome;
+
+            gsap.to(hideEl, {
+                opacity: 0, y: -10, duration: 0.25,
+                onComplete: () => {
+                    hideEl.style.visibility = 'hidden';
+                    showEl.style.visibility = 'visible';
+                    gsap.fromTo(showEl, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.3 });
+                }
+            });
+        }
+        elTabHome.addEventListener('click', () => switchView('home'));
+        elTabRadio.addEventListener('click', () => switchView('radio'));
+
+        elPlayBtn.addEventListener('click', () => {
+            state.isPlaying = !state.isPlaying;
+            elPlayBtn.classList.toggle('playing', state.isPlaying);
+            
+            if (state.isPlaying) {
+                elCardGlow.classList.remove('paused');
+                elCardGlow.classList.add('playing');
+                simulatePlayback(); typeSubtitle();
+            } else {
+                elCardGlow.classList.remove('playing');
+                elCardGlow.classList.add('paused');
+                clearTimeout(state.typingTimer);
+            }
+            gsap.to(shaderUniforms.u_playIntensity, { value: state.isPlaying ? 1.0 : 0.0, duration: 0.8 });
+        });
+
+        function simulatePlayback() {
+            if (!state.isPlaying) return;
+            state.playProgress += 0.01;
+            if (state.playProgress > 1) state.playProgress = 0;
+
+            const activeIndex = Math.floor(state.playProgress * dots.length);
+            dots.forEach((dot, index) => {
+                dot.className = 'progress-dot';
+                if (index < activeIndex) dot.classList.add('active');
+                if (index === activeIndex) dot.classList.add('accent');
+            });
+            setTimeout(simulatePlayback, 150);
+        }
+
+        function typeSubtitle() {
+            if (!state.isPlaying) return;
+            const currentStr = state.subtitles[state.subIndex];
+            if (state.charIndex < currentStr.length) {
+                elSubtitleText.textContent += currentStr.charAt(state.charIndex);
+                state.charIndex++;
+                state.typingTimer = setTimeout(typeSubtitle, 50);
+            } else {
+                state.typingTimer = setTimeout(() => {
+                    elSubtitleText.textContent = ""; state.charIndex = 0;
+                    state.subIndex = (state.subIndex + 1) % state.subtitles.length;
+                    typeSubtitle();
+                }, 3000); 
+            }
+        }
+
+        function sendMessage() {
+            const text = elChatInput.value.trim(); if(!text) return;
+            const userMsg = document.createElement('div');
+            userMsg.className = 'msg user'; userMsg.textContent = text;
+            elChatHistory.appendChild(userMsg); elChatInput.value = '';
+            elChatHistory.scrollTop = elChatHistory.scrollHeight;
+
+            setTimeout(() => {
+                const aiMsg = document.createElement('div');
+                aiMsg.className = 'msg ai';
+                aiMsg.textContent = `> Acknowledged request to sync Matrix. Model parameter update successful. Mode verified.`;
+                elChatHistory.appendChild(aiMsg); elChatHistory.scrollTop = elChatHistory.scrollHeight;
+            }, 700);
+        }
+        elSendBtn.addEventListener('click', sendMessage);
+        elChatInput.addEventListener('keypress', (e) => { if(e.key === 'Enter') sendMessage(); });
+
+        /**
+         * ==========================================
+         * 5. WebGL 纯净点阵引擎
+         * ==========================================
+         */
+        const scene = new THREE.Scene();
+        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.getElementById('webgl-container').appendChild(renderer.domElement);
+
+        const shaderUniforms = {
+            u_time: { value: 0.0 },
+            u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+            u_themeMode: { value: 0.0 }, u_playIntensity: { value: 0.0 }
+        };
+
+        const vertexShader = `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position, 1.0); }`;
+        const fragmentShader = `
+            uniform float u_time; uniform vec2 u_resolution; uniform float u_themeMode; uniform float u_playIntensity;
+            varying vec2 vUv;
+            void main() {
+                vec2 st = gl_FragCoord.xy / u_resolution.xy;
+                float gridRes = 70.0;
+                vec2 grid = fract(st * gridRes);
+                float pulse = sin(u_time * 2.0) * 0.5 + 0.5;
+                float activeRadius = 0.10 + (u_playIntensity * pulse * 0.06);
+                float dotAlpha = smoothstep(activeRadius, activeRadius - 0.04, length(grid - 0.5));
+                vec3 baseBg = mix(vec3(0.02), vec3(0.95), u_themeMode);
+                vec3 dotColor = mix(vec3(0.14), vec3(0.84), u_themeMode);
+                gl_FragColor = vec4(mix(baseBg, dotColor, dotAlpha), 1.0);
+            }
+        `;
+
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+            vertexShader, fragmentShader, uniforms: shaderUniforms, depthWrite: false, depthTest: false
+        }));
+        scene.add(mesh);
+
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate); shaderUniforms.u_time.value = clock.getElapsedTime();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            shaderUniforms.u_resolution.value.set(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,34 @@
+{
+  "name": "leo-dj",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420",
+    "dev:api": "node scripts/deepseek_proxy.mjs",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 1420",
+    "lint": "tsc --noEmit",
+    "data:crawl:bilibili": "node scripts/crawl_bilibili_review.mjs",
+    "data:build:seed": "node scripts/build_playlist_seed.mjs",
+    "data:build:knowledge": "node scripts/build_knowledge_base.mjs",
+    "data:refresh": "npm.cmd run data:crawl:bilibili && npm.cmd run data:build:seed && npm.cmd run data:build:knowledge",
+    "data:export": "node scripts/data_pack.mjs export",
+    "data:import": "node scripts/data_pack.mjs import",
+    "voice:chattts:setup": "powershell -ExecutionPolicy Bypass -File scripts/setup_chattts.ps1",
+    "voice:chattts": "powershell -ExecutionPolicy Bypass -File scripts/start_chattts.ps1",
+    "api:health": "node -e \"fetch('http://127.0.0.1:8787/api/health').then(r=>r.text()).then(console.log)\""
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0"
+  }
+}

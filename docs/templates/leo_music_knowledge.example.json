@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "generatedAt": "2026-05-21T00:00:00.000Z",
+  "source": {
+    "kind": "user_playlist_import",
+    "owner": "local_user",
+    "url": "",
+    "processedGeneratedAt": "2026-05-21T00:00:00.000Z"
+  },
+  "ingestionPolicy": {
+    "approvalMode": "auto_approved_all",
+    "reason": "Local user supplied playlists for private AI DJ distillation.",
+    "futureAdditions": "Append new playlists and regenerate this file."
+  },
+  "summary": {
+    "collections": 1,
+    "sourceVideos": 1,
+    "activePlaylists": 1,
+    "playlistsWithTracks": 1,
+    "themeOnlyPlaylists": 0,
+    "trackPlacements": 2,
+    "uniqueTrackKeys": 2,
+    "inferredArtistPlacements": 0
+  },
+  "vocabulary": {
+    "collections": [
+      {
+        "value": "My Playlists",
+        "count": 1
+      }
+    ],
+    "tags": [
+      {
+        "value": "夜行",
+        "count": 1
+      }
+    ],
+    "scenes": [
+      {
+        "value": "深夜",
+        "count": 1
+      }
+    ],
+    "moods": [
+      {
+        "value": "低亮度",
+        "count": 1
+      }
+    ]
+  },
+  "playlists": [
+    {
+      "id": "my-night-drive",
+      "status": "active",
+      "ingestion": {
+        "sourceStatus": "user_supplied",
+        "approvedForDistillation": true,
+        "needsManualTracks": false
+      },
+      "source": {
+        "bvid": "",
+        "title": "Night Drive",
+        "url": "",
+        "coverUrl": "",
+        "pubdateText": "",
+        "durationText": ""
+      },
+      "collection": {
+        "title": "My Playlists",
+        "name": "My Playlists"
+      },
+      "theme": {
+        "primary": "深夜低亮度 R&B",
+        "englishTitle": "Night Drive R&B",
+        "tags": ["夜行", "R&B"],
+        "scenes": ["深夜", "通勤"],
+        "moods": ["低亮度", "放松"]
+      },
+      "trackCount": 2,
+      "tracks": [
+        {
+          "id": "my-night-drive-001",
+          "position": 1,
+          "timestamp": "",
+          "title": "Song Title",
+          "artist": "Artist Name",
+          "confidence": 0.95
+        },
+        {
+          "id": "my-night-drive-002",
+          "position": 2,
+          "timestamp": "",
+          "title": "Another Song",
+          "artist": "",
+          "confidence": 0.6,
+          "needsReview": true,
+          "raw": "Another Song"
+        }
+      ]
+    }
+  ]
+}
