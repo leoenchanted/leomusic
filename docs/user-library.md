@@ -1,26 +1,42 @@
 # 自定义歌单知识库
 
-这个项目可以给不同的人本地使用。每个人都可以把自己的歌单、收藏、播放记录、文本笔记、表格、截图 OCR、Spotify/网易云/YouTube/B 站列表等材料，交给自己的 AI 整理成同一份知识库 JSON。
+这个项目的“知识库”就是一份本地 JSON 文件。它不存音乐音频，只存你的歌单、主题、场景、心情标签、歌曲名、歌手、来源链接等信息。DeepSeek 会用它理解你的听歌习惯，再生成电台。
 
-## 放到哪里
+## 当前项目里有几类数据
 
-生成出来的知识库 JSON 需要保存两份：
+必须分清楚这几个目录：
+
+```text
+data/bilibili/
+```
+
+这是从 LEO 的 B 站主页抓下来的原始和中间数据，属于 LEO 个人数据。
 
 ```text
 data/library/leo_music_knowledge.json
+```
+
+这是后端真正给 DeepSeek 检索用的知识库。
+
+```text
 public/data/library/leo_music_knowledge.json
 ```
 
-原因：
+这是前端页面读取的知识库副本，用来显示统计和本地歌单信息。
 
-- `scripts/deepseek_proxy.mjs` 读取 `data/library/leo_music_knowledge.json`，用来给 DeepSeek 做检索上下文。
-- 前端 PWA 读取 `public/data/library/leo_music_knowledge.json`，用来显示知识库统计和本地歌单信息。
+```text
+data/debug/
+```
 
-如果只想先打开前端，缺少这个文件时会 fallback 到 sample data。真正生成私人电台时，后端需要 `data/library/leo_music_knowledge.json`。
+这是 DeepSeek 请求和返回的本地调试快照。
 
-## 不要提交个人数据
+```text
+data/exports/
+```
 
-这些路径是本地个人数据，不应该推到 git：
+这是导出的个人知识库数据包，换电脑时可以带走。
+
+这些目录都不应该提交到 git：
 
 ```text
 data/bilibili/
@@ -29,98 +45,143 @@ data/debug/
 data/exports/
 public/data/
 dist/
+asset/
 ```
 
-`data/debug/` 里会有 DeepSeek 请求和返回的调试快照，虽然 key 会被隐藏，但仍然属于本地调试数据。`data/exports/` 是个人知识库导出包，也不要提交。
+## 看当前知识库状态
 
-## 让自己的 AI 生成结构
+运行：
 
-把下面这段提示词，连同你的原始歌单数据一起发给你自己的 AI。原始数据可以是任意格式。
+```powershell
+npm.cmd run data:status
+```
+
+它会告诉你：
+
+- 当前知识库来源
+- 多少个歌单/视频
+- 多少首歌曲记录
+- 有多少歌单只有主题、还没有歌曲
+- 高频场景、心情、标签
+- 前几个歌单样例
+
+## 怎么让别人蒸馏自己的歌单
+
+在别人的电脑上，本质流程是：
+
+1. 准备自己的歌单资料。
+2. 发给自己的 AI，让 AI 生成 `leo_music_knowledge.json`。
+3. 把生成的 JSON 放到项目指定位置。
+4. 启动本地后端和前端。
+
+歌单资料可以是任意形式：
+
+- Spotify / Apple Music / 网易云 / QQ 音乐歌单文本
+- B 站视频列表
+- YouTube playlist
+- Notion 笔记
+- Markdown 表格
+- Excel/CSV 复制出来的文本
+- 截图 OCR 后的文字
+- 自己手写的“歌名 - 歌手 - 场景/心情”
+
+## 发给 AI 的提示词
+
+把下面这段提示词，加上自己的原始歌单资料，一起发给自己的 AI：
 
 ```text
 你是一个音乐知识库结构化助手。请把我提供的任意格式歌单数据，整理成 LEO DJ 项目可读取的 JSON。
 
 输出要求：
 1. 只输出一个合法 JSON 对象，不要 Markdown，不要解释。
-2. JSON 顶层必须包含：
-   - version: number
-   - generatedAt: ISO 时间字符串
-   - source: object
-   - ingestionPolicy: object
-   - summary: object
-   - vocabulary: object
-   - playlists: array
-3. playlists 里的每个 playlist 必须包含：
-   - id: string，稳定唯一，优先用来源 id，否则用 slug
-   - status: "active"
-   - ingestion: object
-   - source: object
-   - collection: object 或 null
-   - theme: object
-   - trackCount: number
-   - tracks: array
-4. 每首 track 必须包含：
-   - id: string
-   - position: number
-   - timestamp: string，可没有时间时填 ""
-   - title: string
-   - artist: string，可未知时填 ""
-   - confidence: number，0 到 1
-   - inferredArtist: boolean，可选
-   - needsReview: boolean，可选
-   - raw: string，可选
-5. theme 必须包含：
-   - primary: string，中文主题名
-   - englishTitle: string，可为空
-   - tags: string[]
-   - scenes: string[]
-   - moods: string[]
-6. source 必须包含：
-   - bvid: string，如果不是 B 站就填来源唯一 id 或 ""
-   - title: string
-   - url: string
-   - coverUrl: string，可为空
-   - pubdateText: string，可为空
-   - durationText: string，可为空
-7. summary 需要统计：
-   - collections
-   - sourceVideos
-   - activePlaylists
-   - playlistsWithTracks
-   - themeOnlyPlaylists
-   - trackPlacements
-   - uniqueTrackKeys
-   - inferredArtistPlacements
+2. JSON 顶层必须包含 version、generatedAt、source、ingestionPolicy、summary、vocabulary、playlists。
+3. playlists 里的每个 playlist 必须包含 id、status、ingestion、source、collection、theme、trackCount、tracks。
+4. 每首 track 必须包含 id、position、timestamp、title、artist、confidence。
+5. theme 必须包含 primary、englishTitle、tags、scenes、moods。
+6. source 必须包含 bvid、title、url、coverUrl、pubdateText、durationText。不是 B 站来源时 bvid 可填来源唯一 id 或空字符串。
+7. summary 需要统计 collections、sourceVideos、activePlaylists、playlistsWithTracks、themeOnlyPlaylists、trackPlacements、uniqueTrackKeys、inferredArtistPlacements。
 8. 不要编造不存在的歌曲。无法确定歌手时 artist 留空，并把 confidence 降低。
 9. 如果同一个来源里有明显主题、场景、情绪，请提炼到 theme.tags/scenes/moods。
 10. 输出的 JSON 要能直接保存为 leo_music_knowledge.json。
 
+字段说明：
+- version: number，填 1。
+- generatedAt: ISO 时间字符串。
+- source: 描述这份知识库从哪里来。
+- ingestionPolicy: 描述这批数据是否自动启用。
+- summary: 全局统计。
+- vocabulary: 高频 collections/tags/scenes/moods/artists。
+- playlists: 歌单数组。
+
+playlist 结构：
+- id: 稳定唯一字符串。
+- status: "active"。
+- ingestion: 可以写 { "method": "ai_distilled", "review": "user_supplied" }。
+- source: 来源信息。
+- collection: 歌单所属合集，没有就填 null。
+- theme: 这个歌单的主题、场景、心情。
+- trackCount: tracks 数量。
+- tracks: 歌曲数组。
+
+track 结构：
+- id: 稳定唯一字符串。
+- position: 歌曲顺序，从 1 开始。
+- timestamp: 原资料有时间轴就填，没有就填 ""。
+- title: 歌名。
+- artist: 歌手，不确定就填 ""。
+- confidence: 0 到 1。
+- inferredArtist: 如果歌手是推断的，填 true。
+- needsReview: 不确定时填 true。
+- raw: 原始行文本，可选。
+
 下面是我的原始歌单数据，请按上面的结构整理：
 
-<<<在这里粘贴我的歌单数据>>>
+<<<把我的歌单资料粘贴在这里>>>
 ```
 
-示例结构在：
+参考结构在：
 
 ```text
 docs/templates/leo_music_knowledge.example.json
 ```
 
-## 导出和导入数据包
+## 生成后放到哪里
 
-导出当前机器上的个人知识库：
+把 AI 输出的 JSON 保存成两份：
+
+```text
+data/library/leo_music_knowledge.json
+public/data/library/leo_music_knowledge.json
+```
+
+原因：
+
+- 后端代理 `scripts/deepseek_proxy.mjs` 读 `data/library/leo_music_knowledge.json`。
+- 前端页面读 `public/data/library/leo_music_knowledge.json`。
+
+保存后运行：
+
+```powershell
+npm.cmd run data:status
+```
+
+确认它能读出来。
+
+## 换电脑怎么带走自己的知识库
+
+在旧电脑导出：
 
 ```powershell
 npm.cmd run data:export
 ```
 
-默认会生成：
+会生成：
 
 ```text
 data/exports/leo-dj-data-pack-时间戳.json
 ```
 
-这个导出包只包含最终蒸馏知识库，不包含原始 B 站抓取数据和 debug 快照。换电脑时，把这个 JSON 包放进新项目目录，然后运行：
+把这个 JSON 文件复制到新电脑项目的 `data/exports/` 下，然后在新电脑导入：
 
 ```powershell
 npm.cmd run data:import -- --in data/exports/leo-dj-data-pack-时间戳.json
@@ -133,6 +194,12 @@ data/library/leo_music_knowledge.json
 public/data/library/leo_music_knowledge.json
 ```
 
+然后再检查：
+
+```powershell
+npm.cmd run data:status
+```
+
 ## 本地打开项目
 
 第一次使用先安装依赖：
@@ -141,7 +208,7 @@ public/data/library/leo_music_knowledge.json
 npm.cmd install
 ```
 
-然后开两个终端。
+开两个终端。
 
 终端 1，启动本地 AI/语音代理：
 
@@ -161,38 +228,39 @@ npm.cmd run dev
 http://127.0.0.1:1420/
 ```
 
-如果 1420 被占用，可以换端口：
+如果 `dev:api` 报：
 
-```powershell
-npm.cmd run dev -- --port 1421
+```text
+EADDRINUSE: address already in use 127.0.0.1:8787
 ```
 
-确认后端是否活着：
+说明后端可能已经开着了。先运行：
 
 ```powershell
 npm.cmd run api:health
 ```
 
-如果 `npm.cmd run dev:api` 报 `EADDRINUSE: address already in use 127.0.0.1:8787`，说明本地后端已经开着了。先跑 `npm.cmd run api:health`，如果返回 `{"ok":true,...}`，就不用再启动后端，直接开前端。
+如果返回 `{"ok":true,...}`，就不用再开后端，只开前端即可。
 
-本地自用时，可以在页面 Settings 里填自己的 DeepSeek、MiniMax、Spotify 配置。共享给别人本地跑时，让对方填自己的 key 和导入自己的知识库数据包。
+## ChatTTS 本地声音
 
-## Spotify 本地授权
+第一次安装：
 
-Spotify 使用 Authorization Code with PKCE，本地不需要 Client Secret。
+```powershell
+npm.cmd run voice:chattts:setup
+```
 
-1. 在 Spotify Developer Dashboard 创建 app。
-2. 把 Settings 里显示的 Redirect URI 加到 Spotify app 的 Redirect URIs。
-3. Redirect URI 用 `http://127.0.0.1:1420/` 这类地址，不要用 `localhost`。
-4. 在 Settings 填 Spotify Client ID。
-5. 点击 `Open Spotify Login`，登录并授权后会回到本地页面，token 会自动保存到浏览器。
+启动 ChatTTS helper：
 
-如果你换了前端端口，例如 `1421`，Spotify Dashboard 里也要加对应的 `http://127.0.0.1:1421/`。
+```powershell
+npm.cmd run voice:chattts
+```
 
-项目默认 Client ID 写在 `src/App.tsx` 的 `DEFAULT_SPOTIFY_CLIENT_ID`。Client ID 不是 secret，可以放在前端；不要把 Client Secret 放进前端代码。
+前端 Settings 里填：
 
-如果授权后出现 `invalid_grant`，通常是同一个 Spotify authorization code 被重复兑换，或者 Redirect URI 和 Dashboard 不完全一致。刷新本地页面后重新点 `Open Spotify Login`，让它生成新的授权 code。
+```text
+Provider = Local TTS Helper
+Local TTS Helper Endpoint = http://127.0.0.1:8789/tts
+```
 
-授权成功不等于 Spotify 已经有可控制的播放设备。播放前请先打开 Spotify 桌面端或手机端，并随便播放/暂停一首歌，让它出现在 Spotify Connect 设备列表里。项目会自动选择 active device；没有设备、没有 Premium、app 还在 Development Mode 且账号没加入 allowlist，都会导致播放 API 失败。
-
-Spotify 已连接时，电台进度会跟随 Spotify 的真实播放状态。项目会轮询 `GET /v1/me/player`，用 `progress_ms / duration_ms` 更新进度，并只在当前 Spotify 歌曲接近结束时切到下一首。未连接 Spotify 时才使用本地模拟进度。
+然后点 `Test Voice` 测试声音是否连上。

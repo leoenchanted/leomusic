@@ -13,6 +13,7 @@
     "data:build:seed": "node scripts/build_playlist_seed.mjs",
     "data:build:knowledge": "node scripts/build_knowledge_base.mjs",
     "data:refresh": "npm.cmd run data:crawl:bilibili && npm.cmd run data:build:seed && npm.cmd run data:build:knowledge",
+    "data:status": "node scripts/data_status.mjs",
     "data:export": "node scripts/data_pack.mjs export",
     "data:import": "node scripts/data_pack.mjs import",
     "voice:chattts:setup": "powershell -ExecutionPolicy Bypass -File scripts/setup_chattts.ps1",

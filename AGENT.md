@@ -75,6 +75,7 @@ The app has an `Own Library` / `歌单结构` guide entry in the chat command de
 
 Portable data packs are handled by `scripts/data_pack.mjs`:
 
+- `npm.cmd run data:status` prints the active knowledge source, playlist/track counts, theme-only playlist count, top scenes/moods/tags, and sample playlists. Use it when the user asks what is currently in the knowledge base.
 - `npm.cmd run data:export` writes `data/exports/leo-dj-data-pack-<timestamp>.json`.
 - `npm.cmd run data:import -- --in data/exports/<pack>.json` imports that pack into both required knowledge paths.
 - Export packs contain the final distilled `leo_music_knowledge.json` and optional `leo_music_knowledge.md`; they do not include raw Bilibili crawl files or DeepSeek debug snapshots.

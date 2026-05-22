@@ -6,6 +6,7 @@ dist
 cache
 .cache
 .local
+asset/
 chattts
 src-tauri/target
 src-tauri/gen
