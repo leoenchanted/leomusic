@@ -14,7 +14,6 @@ import {
   Send,
   Settings,
   SlidersHorizontal,
-  TerminalSquare,
   Volume2,
   X,
   Zap
@@ -22,7 +21,6 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type LocalAiSettings } from "./lib/backend";
 import type {
-  AssistantIntent,
   AssistantResult,
   BackendStatus,
   DjSet,
@@ -39,6 +37,8 @@ type ChatMessage = {
 };
 
 type VoiceProvider = "browser" | "minimax" | "kokoro";
+
+type SpotifyPlaybackSource = "auto" | "button" | "local-timer" | "nudge" | "play" | "spotify-end";
 
 type SpotifyDevice = {
   id: string | null;
@@ -118,12 +118,12 @@ const initialMessages: ChatMessage[] = [
   {
     id: "sys-online",
     role: "ai",
-    text: "> SYSTEM_ONLINE. Awaiting your frequency."
+    text: "我在。你可以直接聊天，也可以用 /radio、/mood、/daily 或 /focus 生成一段私人电台。"
   },
   {
     id: "hint",
     role: "ai",
-    text: "> 输入一个主题，我会从你的本地音乐知识库里生成一段私人电台队列。"
+    text: "输入一个主题后，我会先理解你的状态和口味，再从本地知识库加少量新发现里排歌。"
   }
 ];
 
@@ -209,25 +209,34 @@ function formatLocalMoment(date: Date) {
   }).format(date);
 }
 
-function summarizeIntent(intent?: AssistantIntent) {
-  if (!intent) return "";
-
-  const query = intent.retrievalQuery;
-  const parts = [
-    `mode=${intent.mode}`,
-    intent.stationTheme ? `station=${intent.stationTheme}` : "",
-    query.scenes.length ? `scenes=${query.scenes.join("/")}` : "",
-    query.moods.length ? `moods=${query.moods.join("/")}` : "",
-    query.tags.length ? `tags=${query.tags.slice(0, 3).join("/")}` : ""
-  ].filter(Boolean);
-
-  return `> INTENT_DISTILLED. ${parts.join(" · ")}`;
-}
-
 function formatSuggestions(result: AssistantResult) {
   const suggestions = result.suggestions ?? result.intent?.suggestedPrompts ?? [];
   if (!suggestions.length) return "";
-  return `> TRY_NEXT. ${suggestions.slice(0, 3).join("  |  ")}`;
+  return `你也可以试试：${suggestions.slice(0, 3).join(" / ")}`;
+}
+
+function formatAssistantError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("Missing DeepSeek API key")) {
+    return "还没有连上 DeepSeek。先在 Settings 里填 DeepSeek API Key，或者在 .env.local 里配置。";
+  }
+  if (message.includes("API returned an empty response")) {
+    return "本地 API 代理没有返回内容。先确认 `npm.cmd run dev:api` 正在运行。";
+  }
+  if (message.includes("non-JSON response")) {
+    return "本地 API 代理返回了异常内容，通常是代理没启动或请求被中断。";
+  }
+  if (message.includes("invalid JSON") || message.includes("Unterminated string")) {
+    return "DeepSeek 这次返回格式断了，我已经让后端保留了调试快照。你可以换短一点的主题再试。";
+  }
+  return message;
+}
+
+function formatSpotifyMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message
+    .replace("Spotify is not linked.", "Spotify 还没连接。")
+    .replace("No controllable Spotify device found.", "没有找到可控制的 Spotify 设备。");
 }
 
 function describeSpotifyApiError(status: number, text: string) {
@@ -321,9 +330,12 @@ function App() {
     uri: string;
   } | null>(null);
   const spotifyCallbackHandledRef = useRef(false);
+  const spotifyCommandAbortRef = useRef<AbortController | null>(null);
   const spotifyPollingErrorRef = useRef(false);
   const hasAnnouncedKnowledgeRef = useRef(false);
   const lastSpokenRef = useRef("");
+  const isPlayingRef = useRef(false);
+  const stationRunIdRef = useRef(0);
   const voiceAbortRef = useRef<AbortController | null>(null);
   const voiceRunIdRef = useRef(0);
 
@@ -331,6 +343,10 @@ function App() {
     const timer = window.setInterval(() => setClock(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
 
   useEffect(() => {
     void api.status().then(setStatus);
@@ -361,7 +377,7 @@ function App() {
       spotifyCallbackHandledRef.current = true;
       setMessages((items) => [
         ...items,
-        makeMessage("ai", `> SPOTIFY_AUTH_FAILED. ${authError}`)
+        makeMessage("ai", `Spotify 登录没有完成：${authError}`)
       ]);
       window.history.replaceState({}, "", window.location.pathname);
       return;
@@ -384,7 +400,7 @@ function App() {
     if (pkce.state !== state) {
       setMessages((items) => [
         ...items,
-        makeMessage("ai", "> SPOTIFY_AUTH_FAILED. State mismatch.")
+        makeMessage("ai", "Spotify 登录状态不一致，请重新点一次连接。")
       ]);
       window.localStorage.removeItem(SPOTIFY_PKCE_KEY);
       return;
@@ -430,7 +446,7 @@ function App() {
         window.localStorage.removeItem(SPOTIFY_PKCE_KEY);
         setMessages((items) => [
           ...items,
-          makeMessage("ai", "> SPOTIFY_LINKED. Playback control token saved locally.")
+          makeMessage("ai", "Spotify 已连接，播放控制授权已保存在本机。")
         ]);
       } catch (error) {
         window.localStorage.removeItem(SPOTIFY_PKCE_KEY);
@@ -438,7 +454,7 @@ function App() {
           ...items,
           makeMessage(
             "ai",
-            `> SPOTIFY_AUTH_FAILED. ${error instanceof Error ? error.message : String(error)}`
+            `Spotify 登录失败：${formatSpotifyMessage(error)}`
           )
         ]);
       }
@@ -448,7 +464,7 @@ function App() {
   useEffect(() => {
     chatHistoryRef.current?.scrollTo({
       top: chatHistoryRef.current.scrollHeight,
-      behavior: "smooth"
+      behavior: "auto"
     });
   }, [messages]);
 
@@ -461,7 +477,7 @@ function App() {
       ...items,
       makeMessage(
         "ai",
-        `> BILIBILI_DISTILLATION_READY. ${reviewItems.length} playlists / ${trackCount} track placements loaded.`
+        `已读取本地知识库：${reviewItems.length} 个歌单，${trackCount} 条歌曲记录。`
       )
     ]);
   }, [reviewItems]);
@@ -478,6 +494,11 @@ function App() {
       audioRef.current.src = "";
       audioRef.current = null;
     }
+  }, []);
+
+  const cancelSpotifyCommand = useCallback(() => {
+    spotifyCommandAbortRef.current?.abort();
+    spotifyCommandAbortRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -522,7 +543,7 @@ function App() {
   const progressDots = useMemo(() => Array.from({ length: 20 }, (_, index) => index), []);
 
   useEffect(() => {
-    if (!isPlaying || !hasSpotifyLink || !djSet?.tracks.length) return;
+    if (!isPlaying || !hasSpotifyLink || isDjSpeaking || !djSet?.tracks.length) return;
 
     let cancelled = false;
     const tracks = djSet.tracks;
@@ -590,7 +611,7 @@ function App() {
           ...items,
           makeMessage(
             "ai",
-            `> SPOTIFY_SYNC_FAILED. ${error instanceof Error ? error.message : String(error)}`
+            `Spotify 状态同步失败：${formatSpotifyMessage(error)}`
           )
         ]);
       }
@@ -605,7 +626,7 @@ function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [activeTrackIndex, djSet?.tracks, hasSpotifyLink, isPlaying]);
+  }, [activeTrackIndex, djSet?.tracks, hasSpotifyLink, isDjSpeaking, isPlaying]);
 
   const playVoiceLine = useCallback(
     async (
@@ -746,6 +767,8 @@ function App() {
 
   useEffect(() => {
     if (!isPlaying) {
+      stationRunIdRef.current += 1;
+      cancelSpotifyCommand();
       stopVoicePlayback();
       return;
     }
@@ -754,6 +777,7 @@ function App() {
     if (!activeSubtitle.trim() || speechKey === lastSpokenRef.current) return;
 
     let cancelled = false;
+    const stationRunId = stationRunIdRef.current;
     setIsDjSpeaking(true);
     setProgress(0);
     setPlaybackPositionMs(0);
@@ -762,11 +786,16 @@ function App() {
     void (async () => {
       try {
         await playVoiceLine(activeSubtitle, settings, { holdStationPlayback: true });
-        if (cancelled) return;
+        if (cancelled || stationRunIdRef.current !== stationRunId || !isPlayingRef.current) {
+          return;
+        }
         lastSpokenRef.current = speechKey;
         setIsDjSpeaking(false);
         if (hasSpotifyLink && activeTrack) {
-          await playTrackOnSpotify(activeTrack, "auto");
+          await playTrackOnSpotify(activeTrack, "auto", {
+            silent: true,
+            stationRunId
+          });
         }
       } catch (error) {
         if (cancelled || !isPlaying) return;
@@ -776,7 +805,7 @@ function App() {
           ...items,
           makeMessage(
             "ai",
-            `> VOICE_FAILED. ${error instanceof Error ? error.message : String(error)}`
+            `声音播放失败：${formatAssistantError(error)}`
           )
         ]);
       }
@@ -784,6 +813,8 @@ function App() {
 
     return () => {
       cancelled = true;
+      stationRunIdRef.current += 1;
+      cancelSpotifyCommand();
       stopVoicePlayback();
     };
   }, [
@@ -792,6 +823,7 @@ function App() {
     activeTrack?.id,
     hasSpotifyLink,
     isPlaying,
+    cancelSpotifyCommand,
     playVoiceLine,
     settings,
     stopVoicePlayback
@@ -810,8 +842,6 @@ function App() {
     };
   }, [reviewItems]);
 
-  const hasLocalApiKey = Boolean(settings.apiKey.trim());
-
   async function runAssistant(inputText: string) {
     const cleanInput = inputText.trim();
     if (!cleanInput || isBusy) return;
@@ -823,15 +853,16 @@ function App() {
       const result = await api.runAssistant(cleanInput, settings, {
         localMoment: formatLocalMoment(new Date())
       });
-      const intentLine = summarizeIntent(result.intent);
       const suggestionLine = formatSuggestions(result);
       const responseMessages = [
-        intentLine ? makeMessage("ai", intentLine) : null,
-        result.message ? makeMessage("ai", `> ${result.message}`) : null,
+        result.message ? makeMessage("ai", result.message) : null,
         suggestionLine ? makeMessage("ai", suggestionLine) : null
       ].filter((message): message is ChatMessage => Boolean(message));
 
       if (result.djSet) {
+        stationRunIdRef.current += 1;
+        cancelSpotifyCommand();
+        stopVoicePlayback();
         setDjSet(result.djSet);
         setActiveTrackIndex(0);
         setProgress(0);
@@ -843,12 +874,12 @@ function App() {
         responseMessages.push(
           makeMessage(
             "ai",
-            `> FREQUENCY_LOCKED. ${result.djSet.title} / ${result.djSet.tracks.length} tracks / mode=${result.mode ?? "radio"}.`
+            `电台已排好：${result.djSet.title}，共 ${result.djSet.tracks.length} 首。我会先说开场，再开始放歌。`
           )
         );
         if (hasSpotifyLink && result.djSet.tracks[0]) {
           responseMessages.push(
-            makeMessage("ai", "> RADIO_OPENING_ARMED. DJ intro will play before Spotify starts.")
+            makeMessage("ai", "Spotify 已连接；开场说完后会自动把第一首发到当前设备。")
           );
         }
       } else {
@@ -861,7 +892,7 @@ function App() {
         ...items,
         makeMessage(
           "ai",
-          `> ASSISTANT_FAILED. ${error instanceof Error ? error.message : String(error)}`
+          `这次没有生成成功：${formatAssistantError(error)}`
         )
       ]);
     } finally {
@@ -915,7 +946,7 @@ function App() {
       ...items,
       makeMessage(
         "ai",
-        `> SETTINGS_SYNCED. model=${normalized.model} voice=${normalized.voiceProvider} spotify=${normalized.spotifyAccessToken ? "LINKED" : "NOT_LINKED"} local_secret=${normalized.apiKey ? "SET" : "ENV_OR_MISSING"}.`
+        `设置已保存。当前模型：${normalized.model}；声音：${normalized.voiceProvider}；Spotify：${normalized.spotifyAccessToken ? "已连接" : "未连接"}。`
       )
     ]);
   }
@@ -935,22 +966,11 @@ function App() {
     await playVoiceLine("LEO DJ 声音测试。", normalized);
   }
 
-  function injectDiagnostics() {
-    const lines = [
-      `> telemetry dump: stream_buffer=${settings.streamBuffer}ms`,
-      `knowledge=${libraryStats.playlists} playlists/${libraryStats.tracks} tracks`,
-      `database=${status?.databaseReady ? "READY" : "CHECKING"}`,
-      `local_key=${hasLocalApiKey ? "SET" : "NOT_SET"}`
-    ];
-    setMessages((items) => [...items, makeMessage("ai", lines.join(" "))]);
-    setView("chat");
-  }
-
   function nudgeTrack() {
     if (!djSet?.tracks.length) {
       setMessages((items) => [
         ...items,
-        makeMessage("ai", "> TUNING_WAITING. Generate a station before adjusting the queue.")
+        makeMessage("ai", "先生成一段电台，再切换下一首。")
       ]);
       setView("chat");
       return;
@@ -967,13 +987,16 @@ function App() {
     const nextTrack = djSet?.tracks[nextIndex];
     if (!nextTrack) return;
 
+    stationRunIdRef.current += 1;
+    cancelSpotifyCommand();
+    stopVoicePlayback();
     setActiveTrackIndex(nextIndex);
     setProgress(0);
     setPlaybackPositionMs(0);
     setPlaybackDurationMs(LOCAL_TRACK_DURATION_MS);
     setView("radio");
     if (hasSpotifyLink) {
-      void pauseSpotifyPlayback();
+      void pauseSpotifyPlayback({ silent: true });
     }
   }
 
@@ -985,7 +1008,7 @@ function App() {
     if (!clientId) {
       setMessages((items) => [
         ...items,
-        makeMessage("ai", "> SPOTIFY_NEEDS_CLIENT_ID. Paste Spotify Client ID in Settings, then click Open Spotify Login.")
+        makeMessage("ai", "需要先填 Spotify Client ID，然后再打开 Spotify 登录。")
       ]);
       setSettingsOpen(true);
       return;
@@ -1025,7 +1048,7 @@ function App() {
     window.localStorage.setItem(SPOTIFY_AUTH_URL_KEY, url.toString());
     setMessages((items) => [
       ...items,
-      makeMessage("ai", "> SPOTIFY_AUTH_REDIRECT. Leaving local console for Spotify login.")
+      makeMessage("ai", "正在打开 Spotify 登录页，授权后会自动回到这个本地页面。")
     ]);
     setSettingsOpen(false);
     window.setTimeout(() => {
@@ -1033,24 +1056,25 @@ function App() {
     }, 80);
   }
 
-  async function getSpotifyAccessToken() {
-    if (!settings.spotifyAccessToken.trim()) {
+  async function getSpotifyAccessToken(sourceSettings: StoredSettings = settings) {
+    if (!sourceSettings.spotifyAccessToken.trim()) {
       throw new Error("Spotify is not linked.");
     }
 
     const hasValidToken =
-      !settings.spotifyTokenExpiresAt || settings.spotifyTokenExpiresAt - Date.now() > 60_000;
-    if (hasValidToken || !settings.spotifyRefreshToken.trim()) {
-      return settings.spotifyAccessToken.trim();
+      !sourceSettings.spotifyTokenExpiresAt ||
+      sourceSettings.spotifyTokenExpiresAt - Date.now() > 60_000;
+    if (hasValidToken || !sourceSettings.spotifyRefreshToken.trim()) {
+      return sourceSettings.spotifyAccessToken.trim();
     }
 
     const response = await fetch("https://accounts.spotify.com/api/token", {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        client_id: settings.spotifyClientId,
+        client_id: sourceSettings.spotifyClientId,
         grant_type: "refresh_token",
-        refresh_token: settings.spotifyRefreshToken
+        refresh_token: sourceSettings.spotifyRefreshToken
       })
     });
     const text = await response.text();
@@ -1064,9 +1088,9 @@ function App() {
       refresh_token?: string;
     };
     const nextSettings = {
-      ...settings,
+      ...sourceSettings,
       spotifyAccessToken: token.access_token,
-      spotifyRefreshToken: token.refresh_token ?? settings.spotifyRefreshToken,
+      spotifyRefreshToken: token.refresh_token ?? sourceSettings.spotifyRefreshToken,
       spotifyTokenExpiresAt: Date.now() + token.expires_in * 1000
     };
 
@@ -1143,21 +1167,36 @@ function App() {
 
   async function playTrackOnSpotify(
     track: DjTrack,
-    source: "auto" | "button" | "local-timer" | "nudge" | "play" | "spotify-end"
+    source: SpotifyPlaybackSource,
+    options: { silent?: boolean; stationRunId?: number } = {}
   ) {
+    const requiresActiveStation = typeof options.stationRunId === "number";
+    const isStaleStationRun = () =>
+      typeof options.stationRunId === "number" &&
+      options.stationRunId !== stationRunIdRef.current;
+
     if (!settings.spotifyAccessToken.trim()) {
       setMessages((items) => [
         ...items,
-        makeMessage("ai", "> SPOTIFY_NOT_LINKED. Connect Spotify in Settings first.")
+        makeMessage("ai", "Spotify 还没连接。先在 Settings 里完成 Spotify 登录。")
       ]);
       setSettingsOpen(true);
       return;
     }
 
+    let commandController: AbortController | null = null;
+
     try {
+      cancelSpotifyCommand();
+      commandController = new AbortController();
+      spotifyCommandAbortRef.current = commandController;
+      if (isStaleStationRun() || (requiresActiveStation && !isPlayingRef.current)) return;
       const accessToken = await getSpotifyAccessToken();
+      if (isStaleStationRun() || (requiresActiveStation && !isPlayingRef.current)) return;
       const device = await getSpotifyPlaybackDevice(accessToken);
+      if (isStaleStationRun() || (requiresActiveStation && !isPlayingRef.current)) return;
       const spotifyTrack = await findSpotifyTrack(track, accessToken);
+      if (isStaleStationRun() || (requiresActiveStation && !isPlayingRef.current)) return;
       const endpoint = new URL("https://api.spotify.com/v1/me/player/play");
       if (device.id) endpoint.searchParams.set("device_id", device.id);
       const playResponse = await fetch(endpoint.toString(), {
@@ -1166,7 +1205,8 @@ function App() {
           authorization: `Bearer ${accessToken}`,
           "content-type": "application/json"
         },
-        body: JSON.stringify({ uris: [spotifyTrack.uri] })
+        body: JSON.stringify({ uris: [spotifyTrack.uri] }),
+        signal: commandController.signal
       });
       const playText = await playResponse.text();
       if (!playResponse.ok && playResponse.status !== 204) {
@@ -1181,25 +1221,56 @@ function App() {
       setPlaybackPositionMs(0);
       setPlaybackDurationMs(spotifyTrack.durationMs || LOCAL_TRACK_DURATION_MS);
       setProgress(0);
+      if (!options.silent) {
+        setMessages((items) => [
+          ...items,
+          makeMessage("ai", `已发送到 Spotify：${track.title}，设备：${device.name}。`)
+        ]);
+      }
+    } catch (error) {
+      if (isVoiceCancelError(error)) return;
       setMessages((items) => [
         ...items,
         makeMessage(
           "ai",
-          `> SPOTIFY_PLAYBACK_SENT. ${track.title} -> ${device.name} / source=${source}.`
+          `Spotify 播放失败：${formatSpotifyMessage(error)}`
         )
       ]);
+    } finally {
+      if (spotifyCommandAbortRef.current === commandController) {
+        spotifyCommandAbortRef.current = null;
+      }
+    }
+  }
+
+  async function resumeSpotifyPlayback() {
+    if (!settings.spotifyAccessToken.trim()) return;
+
+    try {
+      const accessToken = await getSpotifyAccessToken();
+      const device = await getSpotifyPlaybackDevice(accessToken);
+      const endpoint = new URL("https://api.spotify.com/v1/me/player/play");
+      if (device.id) endpoint.searchParams.set("device_id", device.id);
+      const response = await fetch(endpoint.toString(), {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          "content-type": "application/json"
+        }
+      });
+      const text = await response.text();
+      if (!response.ok && response.status !== 204) {
+        throw new Error(describeSpotifyApiError(response.status, text));
+      }
     } catch (error) {
       setMessages((items) => [
         ...items,
-        makeMessage(
-          "ai",
-          `> SPOTIFY_PLAYBACK_FAILED. ${error instanceof Error ? error.message : String(error)}`
-        )
+        makeMessage("ai", `Spotify 恢复播放失败：${formatSpotifyMessage(error)}`)
       ]);
     }
   }
 
-  async function pauseSpotifyPlayback() {
+  async function pauseSpotifyPlayback(options: { silent?: boolean } = {}) {
     if (!settings.spotifyAccessToken.trim()) return;
 
     try {
@@ -1215,11 +1286,12 @@ function App() {
         throw new Error(describeSpotifyApiError(response.status, text));
       }
     } catch (error) {
+      if (options.silent) return;
       setMessages((items) => [
         ...items,
         makeMessage(
           "ai",
-          `> SPOTIFY_PAUSE_FAILED. ${error instanceof Error ? error.message : String(error)}`
+          `Spotify 暂停失败：${formatSpotifyMessage(error)}`
         )
       ]);
     }
@@ -1229,12 +1301,25 @@ function App() {
     if (!activeTrack) {
       setMessages((items) => [
         ...items,
-        makeMessage("ai", "> SPOTIFY_WAITING. Generate a station before sending playback.")
+        makeMessage("ai", "先生成一段电台，再发送当前歌曲到 Spotify。")
       ]);
       return;
     }
 
     await playTrackOnSpotify(activeTrack, "button");
+  }
+
+  async function testSpotifyConnection(candidateSettings: StoredSettings) {
+    const accessToken = await getSpotifyAccessToken({
+      ...candidateSettings,
+      spotifyAccessToken: candidateSettings.spotifyAccessToken.trim(),
+      spotifyClientId: candidateSettings.spotifyClientId.trim(),
+      spotifyRedirectUri:
+        candidateSettings.spotifyRedirectUri.trim() || defaultSettings.spotifyRedirectUri,
+      spotifyRefreshToken: candidateSettings.spotifyRefreshToken.trim()
+    });
+    const device = await getSpotifyPlaybackDevice(accessToken);
+    return device.name;
   }
 
   const playbackModeLabel = isDjSpeaking
@@ -1324,7 +1409,7 @@ function App() {
                   {isBusy ? (
                     <div className="msg ai loading-msg">
                       <Loader2 className="spin" size={15} />
-                      <span>&gt; DeepSeek scanning local wavelengths...</span>
+                      <span>DeepSeek 正在理解你的主题和听歌习惯...</span>
                     </div>
                     ) : null}
                 </div>
@@ -1437,9 +1522,11 @@ function App() {
                           activeTrack &&
                           lastSpokenRef.current === speechKey
                         ) {
-                          void playTrackOnSpotify(activeTrack, "play");
+                          void resumeSpotifyPlayback();
                         }
                       } else {
+                        stationRunIdRef.current += 1;
+                        cancelSpotifyCommand();
                         stopVoicePlayback();
                         void pauseSpotifyPlayback();
                       }
@@ -1496,15 +1583,7 @@ function App() {
           </button>
           <button
             className="rack-btn"
-            data-tooltip="Inject Logs"
-            onClick={injectDiagnostics}
-            type="button"
-          >
-            <TerminalSquare size={22} />
-          </button>
-          <button
-            className="rack-btn"
-            data-tooltip="Spotify"
+            data-tooltip="Play on Spotify"
             onClick={() => void playCurrentOnSpotify()}
             type="button"
           >
@@ -1521,6 +1600,7 @@ function App() {
         libraryStats={libraryStats}
         onClose={() => setSettingsOpen(false)}
         onSave={saveSettings}
+        onTestSpotify={testSpotifyConnection}
         onTestVoice={testVoiceConnection}
         open={settingsOpen}
         setDraftSettings={setDraftSettings}
@@ -1566,18 +1646,18 @@ function DotMatrixCanvas({
     }
 
     function draw() {
-      frame += 0.018;
+      frame += isPlaying ? 0.018 : 0;
       const width = window.innerWidth;
       const height = window.innerHeight;
       const bg = isLight ? "#f4f4f4" : "#030303";
       const dot = isLight ? "rgba(0, 0, 0, " : "rgba(255, 255, 255, ";
       const baseAlpha = isLight ? 0.12 : 0.1;
-      const activeAlpha = isPlaying ? 0.24 : 0.08;
+      const activeAlpha = isPlaying ? 0.22 : 0.04;
 
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, width, height);
 
-      const gap = width < 700 ? 20 : 18;
+      const gap = width < 700 ? 24 : 28;
       for (let y = 8; y < height; y += gap) {
         for (let x = 8; x < width; x += gap) {
           const wave = Math.sin(frame + x * 0.012 + y * 0.018) * 0.5 + 0.5;
@@ -1589,16 +1669,23 @@ function DotMatrixCanvas({
         }
       }
 
-      rafId = window.requestAnimationFrame(draw);
+      if (isPlaying) {
+        rafId = window.requestAnimationFrame(draw);
+      }
     }
+
+    const handleResize = () => {
+      resize();
+      draw();
+    };
 
     resize();
     draw();
-    window.addEventListener("resize", resize);
+    window.addEventListener("resize", handleResize);
 
     return () => {
       window.cancelAnimationFrame(rafId);
-      window.removeEventListener("resize", resize);
+      window.removeEventListener("resize", handleResize);
     };
   }, [isLight, isPlaying]);
 
@@ -1656,6 +1743,7 @@ function SettingsModal({
   libraryStats,
   onClose,
   onSave,
+  onTestSpotify,
   onTestVoice,
   open,
   setDraftSettings,
@@ -1668,6 +1756,7 @@ function SettingsModal({
   libraryStats: { active: number; playlists: number; tags: number; tracks: number };
   onClose: () => void;
   onSave: () => void;
+  onTestSpotify: (settings: StoredSettings) => Promise<string>;
   onTestVoice: (settings: StoredSettings) => Promise<void>;
   open: boolean;
   setDraftSettings: (settings: StoredSettings) => void;
@@ -1676,7 +1765,11 @@ function SettingsModal({
   const [voiceTestState, setVoiceTestState] = useState<"idle" | "testing" | "ok" | "error">(
     "idle"
   );
-  const [voiceTestMessage, setVoiceTestMessage] = useState("not tested");
+  const [voiceTestMessage, setVoiceTestMessage] = useState("还没有测试");
+  const [spotifyTestState, setSpotifyTestState] = useState<"idle" | "testing" | "ok" | "error">(
+    "idle"
+  );
+  const [spotifyTestMessage, setSpotifyTestMessage] = useState("还没有检查设备");
 
   function patchSettings(patch: Partial<StoredSettings>) {
     setDraftSettings({ ...draftSettings, ...patch });
@@ -1689,21 +1782,44 @@ function SettingsModal({
       "browserVoiceURI" in patch
     ) {
       setVoiceTestState("idle");
-      setVoiceTestMessage("not tested");
+      setVoiceTestMessage("还没有测试");
+    }
+    if (
+      "spotifyAccessToken" in patch ||
+      "spotifyClientId" in patch ||
+      "spotifyRedirectUri" in patch ||
+      "spotifyRefreshToken" in patch
+    ) {
+      setSpotifyTestState("idle");
+      setSpotifyTestMessage("还没有检查设备");
     }
   }
 
   async function runVoiceTest() {
     setVoiceTestState("testing");
-    setVoiceTestMessage("playing test line");
+    setVoiceTestMessage("正在播放测试语音");
 
     try {
       await onTestVoice(draftSettings);
       setVoiceTestState("ok");
-      setVoiceTestMessage("audio route is working");
+      setVoiceTestMessage("声音链路正常");
     } catch (error) {
       setVoiceTestState("error");
       setVoiceTestMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function runSpotifyTest() {
+    setSpotifyTestState("testing");
+    setSpotifyTestMessage("正在查找可控制设备");
+
+    try {
+      const deviceName = await onTestSpotify(draftSettings);
+      setSpotifyTestState("ok");
+      setSpotifyTestMessage(`可以控制：${deviceName}`);
+    } catch (error) {
+      setSpotifyTestState("error");
+      setSpotifyTestMessage(formatSpotifyMessage(error));
     }
   }
 
@@ -1978,14 +2094,30 @@ function SettingsModal({
             <p className="spotify-auth-copy">
               Paste Client ID, then this button opens Spotify login and returns here after authorization.
             </p>
-            <button
-              className="spotify-login-btn"
-              onClick={() => void connectSpotify(draftSettings)}
-              type="button"
-            >
-              <Headphones size={16} />
-              <span>{spotifyLinked ? "Reauthorize Spotify" : "Open Spotify Login"}</span>
-            </button>
+            <div className="spotify-actions">
+              <button
+                className="spotify-login-btn"
+                onClick={() => void connectSpotify(draftSettings)}
+                type="button"
+              >
+                <Headphones size={16} />
+                <span>{spotifyLinked ? "Reauthorize Spotify" : "Open Spotify Login"}</span>
+              </button>
+              <button
+                className={`spotify-test-btn ${spotifyTestState}`}
+                disabled={!spotifyLinked || spotifyTestState === "testing"}
+                onClick={() => void runSpotifyTest()}
+                type="button"
+              >
+                {spotifyTestState === "testing" ? (
+                  <Loader2 className="spin" size={15} />
+                ) : (
+                  <Check size={15} />
+                )}
+                <span>Check Device</span>
+              </button>
+            </div>
+            <span className={`spotify-test-line ${spotifyTestState}`}>{spotifyTestMessage}</span>
           </div>
 
           <div className="system-matrix">

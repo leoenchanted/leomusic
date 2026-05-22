@@ -151,9 +151,12 @@ The proxy should defensively handle model JSON failures:
 - Generating a radio station should auto-send the first track to Spotify when a token is linked. The main play/pause button should also control Spotify; the rack headphones button manually sends the current track.
 - Radio sequence must behave like a station: play the DJ opening/track intro first, then start the matching Spotify track or local simulated track progress. Do not start Spotify before the first DJ opening has played.
 - Voice playback must be cancellable. Pausing the station, changing tracks, or starting another voice line must abort any pending TTS request and prevent stale generated audio from playing later.
+- Spotify play commands started by an active radio run must be guarded by the current station run id and aborted on pause/track changes, so a stale async request cannot start music after the user has stopped the station.
 - When Spotify is linked, queue progress and next-track timing must be driven by Spotify playback state, not the local simulated stream timer. Poll `GET /v1/me/player`, map `progress_ms / duration_ms` to the UI progress and time readout, and only advance the radio queue when the synced Spotify track is at the end window.
+- Do not poll Spotify while the DJ voice intro is speaking; the previous paused track can otherwise be mistaken for a user pause and interrupt the station.
 - The local simulated stream timer should only advance tracks when Spotify is not linked.
 - Playback control should fail clearly for missing Premium, no active device, expired token, Development Mode allowlist problems, or no track match.
+- NetEase Cloud Music is not currently implemented as a Spotify-equivalent browser OAuth playback target. Public practical options look like a separate local helper/CLI bridge such as `ncm-cli` with a NetEase Open Platform app id/private key and a local player such as mpv. If added later, keep it as an optional local-only playback provider and never commit app private keys, login state, cookies, or generated config.
 
 ## Running The Backend
 
@@ -190,14 +193,16 @@ Do not expose a public shared build that relies on users entering a common share
 - Imported Bilibili data is auto-approved for distillation unless the user later asks for a manual curation gate.
 - Keep TTS provider pluggable. Free local helper providers such as Kokoro or ChatTTS remain the default direction; MiniMax is optional.
 - PWA frontend must not hard-code cloud API secrets in source code. For local-only private use, a settings field backed by browser `localStorage` is acceptable; hosted/shared builds must move secrets back behind a proxy, serverless function, or explicit user-owned private deployment.
-- Keep DJ speech short by default. The target is radio transition, not a long podcast monologue.
-- DJ segments should not feel like mechanical announcements. The first segment is the station opening; each segment should be 2-3 short Chinese sentences, roughly 55-95 Chinese characters, with concrete time/scene/mood/taste signals. Avoid generic phrases like `接下来播放`, `为你推荐`, `这首歌很适合`, and `根据你的喜好`.
+- Keep DJ speech focused. The target is radio transition, not a long podcast monologue.
+- DJ segments should not feel like mechanical announcements. The first segment is the station opening and should be fuller: 3-4 short Chinese sentences, roughly 95-145 Chinese characters, with concrete time/scene/mood/taste signals before the first track starts. Later segments should stay 2-3 short sentences, roughly 55-105 Chinese characters. Avoid generic phrases like `接下来播放`, `为你推荐`, `这首歌很适合`, and `根据你的喜好`.
 
 ## Design Notes
 
 - The active UI direction is a Nothing OS-inspired private radio console: one central glass hardware card, dot-matrix background, red accent, breathing backlight, compact side control rack, and terminal-like AI messages.
 - The app should feel like a local radio operating system or piece of desktop hardware, not a generic dashboard, chatbot, or streaming-player skin.
 - Preserve the two primary surfaces: `AI Chat` for entering a station theme and system messages, `Radio` for the generated queue, current track, and DJ transition subtitle.
+- Chat output is user-facing. Do not print raw telemetry, `INTENT_DISTILLED`, `FREQUENCY_LOCKED`, `source=...`, JSON snippets, debug counters, or other developer status codes into the chat. Keep detailed request/response inspection in `data/debug/*.json`.
+- The old rack `Inject Logs` debug button was removed; avoid reintroducing one unless it is hidden behind a developer-only setting.
 - Use dark mode as the default. Light mode should keep the same glass/hardware language rather than becoming a normal white SaaS UI.
 - Settings should look like a hardware service panel. It may expose local-only API key, base URL, model, temperature, max tokens, and stream buffer controls.
 - Voice, Spotify, and local-owner credentials belong in the same service-panel settings flow, with status visible in the matrix.

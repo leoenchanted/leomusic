@@ -257,6 +257,7 @@ function createPrompt(theme, context, options = {}) {
       "输出必须是严格 JSON，不要 Markdown，不要解释 JSON 之外的内容。",
       "DJ 串场要像一个真正懂 LEO 长期听歌习惯的私人电台主持人，中文，亲近但克制。",
       "串场不是报幕。它要先建立房间、天气、时间、情绪或记忆感，再自然把听众带进下一首歌。",
+      "第一段是完整开场，要让人感觉电台真的进场了；后续串场才保持短促。",
       "knowledgeContext 是口味锚点和可引用曲库，不是唯一曲库。",
       "大部分歌要来自 knowledgeContext；可以加入少量 discovery tracks，用来推荐用户可能喜欢但不在当前知识库片段里的歌。",
       "discovery tracks 必须是真实存在、风格明确、能被 Spotify 搜到的歌曲；不要编造曲目。",
@@ -299,8 +300,9 @@ function createPrompt(theme, context, options = {}) {
           "For discovery tracks, set sourcePlaylistId to \"discovery\" and isDiscovery to true.",
           "For knowledgeContext tracks, set sourcePlaylistId to the source playlist id and isDiscovery to false.",
           "Create one DJ segment before each track.",
-          "The first DJ segment is the station opening. It should feel like entering a private late-night radio room, not an announcement.",
-          "Every DJ segment should be 2-3 short Chinese sentences, about 55-95 Chinese characters total.",
+          "The first DJ segment is the station opening: write 3-4 short Chinese sentences, about 95-145 Chinese characters total, with a clear room/time/mood setup before naming the first track.",
+          "Every later DJ segment should be 2-3 short Chinese sentences, about 55-105 Chinese characters total.",
+          "Set estimatedSeconds around 18-28 for the opening and 10-18 for later segments.",
           "Use concrete taste signals from tasteProfile and knowledgeContext: time, scene, mood, texture, artist lineage, and why this choice fits LEO.",
           "Do not use mechanical phrases like 接下来播放, 为你推荐, 这首歌很适合, 根据你的喜好.",
           "Do not over-explain. Keep it intimate, slightly cinematic, and specific.",
@@ -656,28 +658,40 @@ async function repairModelJson(content, runtime, parseError, debugSnapshot) {
 function normalizeDjSet(raw, theme) {
   const tracks = Array.isArray(raw.tracks) ? raw.tracks : [];
   const segments = Array.isArray(raw.segments) ? raw.segments : [];
+  const normalizedTracks = tracks.map((track, index) => ({
+    id: String(track.id || `track-${index + 1}`),
+    title: String(track.title || ""),
+    artist: String(track.artist || ""),
+    isDiscovery: Boolean(track.isDiscovery || track.sourcePlaylistId === "discovery"),
+    sourcePlaylistId: String(track.sourcePlaylistId || (track.isDiscovery ? "discovery" : "")),
+    sourcePlaylistTheme: String(track.sourcePlaylistTheme || ""),
+    themeReason: String(track.themeReason || "贴合当前主题。")
+  }));
+  const fallbackScript = (track, index) =>
+    index === 0
+      ? `先把房间里的声音调暗一点。今晚这段电台从「${theme}」出发，先用 ${track.title || "第一首歌"} 把情绪放稳，再慢慢往里走。`
+      : `上一首的余温先别关掉。接下来换到 ${track.title || "下一首歌"}，让这段情绪自然往前走。`;
 
   return {
     id: `dj-${Date.now()}`,
     title: String(raw.title || "LEO 私人电台"),
     sourceTheme: String(raw.sourceTheme || theme),
     provider: "deepseek",
-    tracks: tracks.map((track, index) => ({
-      id: String(track.id || `track-${index + 1}`),
-      title: String(track.title || ""),
-      artist: String(track.artist || ""),
-      isDiscovery: Boolean(track.isDiscovery || track.sourcePlaylistId === "discovery"),
-      sourcePlaylistId: String(track.sourcePlaylistId || (track.isDiscovery ? "discovery" : "")),
-      sourcePlaylistTheme: String(track.sourcePlaylistTheme || ""),
-      themeReason: String(track.themeReason || "贴合当前主题。")
-    })),
-    segments: segments.map((segment, index) => ({
-      id: String(segment.id || `segment-${index + 1}`),
-      beforeTrackId: String(segment.beforeTrackId || tracks[index]?.id || `track-${index + 1}`),
-      script: String(segment.script || ""),
-      estimatedSeconds: Number(segment.estimatedSeconds || 12),
-      voiceStatus: "missing"
-    })),
+    tracks: normalizedTracks,
+    segments: normalizedTracks.map((track, index) => {
+      const segment =
+        segments.find((item) => String(item.beforeTrackId || "") === track.id) ??
+        segments[index] ??
+        {};
+
+      return {
+        id: String(segment.id || `segment-${index + 1}`),
+        beforeTrackId: track.id,
+        script: String(segment.script || fallbackScript(track, index)),
+        estimatedSeconds: Number(segment.estimatedSeconds || (index === 0 ? 22 : 14)),
+        voiceStatus: "missing"
+      };
+    }),
     notes: Array.isArray(raw.notes) ? raw.notes.map(String) : []
   };
 }
